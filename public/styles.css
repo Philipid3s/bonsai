@@ -14,16 +14,22 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+}
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
+  overflow: hidden;
 }
 
 .app {
   max-width: 1100px;
   margin: 0 auto;
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   padding: 1rem;
@@ -79,6 +85,7 @@ body {
   gap: 1rem;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .threads-panel {
@@ -209,6 +216,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  overflow: hidden;
 }
 
 .messages {
@@ -221,7 +229,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  min-height: 50vh;
+  min-height: 0;
 }
 
 .message {
@@ -240,6 +248,61 @@ body {
 .message.assistant {
   align-self: flex-start;
   background: #eff6ff;
+}
+
+.message.assistant p,
+.message.assistant ul,
+.message.assistant pre,
+.message.assistant h1,
+.message.assistant h2,
+.message.assistant h3,
+.message.assistant h4 {
+  margin: 0 0 0.5rem;
+}
+
+.message.assistant p:last-child,
+.message.assistant ul:last-child,
+.message.assistant pre:last-child,
+.message.assistant h1:last-child,
+.message.assistant h2:last-child,
+.message.assistant h3:last-child,
+.message.assistant h4:last-child {
+  margin-bottom: 0;
+}
+
+.message.assistant h1,
+.message.assistant h2,
+.message.assistant h3,
+.message.assistant h4 {
+  font-size: 1rem;
+}
+
+.message.assistant ul {
+  padding-left: 1.2rem;
+}
+
+.message.assistant code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.9em;
+  background: #dbeafe;
+  border-radius: 0.3rem;
+  padding: 0.05rem 0.25rem;
+}
+
+.message.assistant pre {
+  background: #dbeafe;
+  border-radius: 0.5rem;
+  padding: 0.6rem;
+  overflow-x: auto;
+}
+
+.message.assistant pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.message.assistant a {
+  color: #0f766e;
 }
 
 .message.system {

@@ -20,6 +20,108 @@ let isSending = false;
 let isPdfLoading = false;
 let storageWarningShown = false;
 
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatInlineMarkdown(value) {
+  const inlineCodeTokens = [];
+  let output = value.replace(/`([^`\n]+)`/g, (_match, code) => {
+    const token = `__INLINE_CODE_${inlineCodeTokens.length}__`;
+    inlineCodeTokens.push(`<code>${code}</code>`);
+    return token;
+  });
+
+  output = output.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, text, url) => {
+    return `<a href="${url}" target="_blank" rel="noreferrer noopener">${text}</a>`;
+  });
+  output = output.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  output = output.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+
+  inlineCodeTokens.forEach((html, index) => {
+    output = output.replace(`__INLINE_CODE_${index}__`, html);
+  });
+
+  return output;
+}
+
+function renderMarkdownToSafeHtml(markdownText) {
+  const codeBlockTokens = [];
+  let text = escapeHtml(markdownText || "").replace(/\r\n/g, "\n");
+
+  text = text.replace(/```([a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g, (_match, lang, code) => {
+    const token = `__CODE_BLOCK_${codeBlockTokens.length}__`;
+    const className = lang ? ` class="language-${lang}"` : "";
+    codeBlockTokens.push(`<pre><code${className}>${code}</code></pre>`);
+    return token;
+  });
+
+  const lines = text.split("\n");
+  const htmlParts = [];
+  let inList = false;
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    const listMatch = rawLine.match(/^\s*[-*]\s+(.+)$/);
+    if (listMatch) {
+      if (!inList) {
+        inList = true;
+        htmlParts.push("<ul>");
+      }
+      htmlParts.push(`<li>${formatInlineMarkdown(listMatch[1])}</li>`);
+      continue;
+    }
+
+    if (inList) {
+      inList = false;
+      htmlParts.push("</ul>");
+    }
+
+    if (!trimmed) {
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,4})\s+(.+)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      htmlParts.push(`<h${level}>${formatInlineMarkdown(headingMatch[2])}</h${level}>`);
+      continue;
+    }
+
+    if (/^__CODE_BLOCK_\d+__$/.test(trimmed)) {
+      htmlParts.push(trimmed);
+      continue;
+    }
+
+    htmlParts.push(`<p>${formatInlineMarkdown(trimmed)}</p>`);
+  }
+
+  if (inList) {
+    htmlParts.push("</ul>");
+  }
+
+  let html = htmlParts.join("\n");
+  codeBlockTokens.forEach((blockHtml, index) => {
+    html = html.replace(`__CODE_BLOCK_${index}__`, blockHtml);
+  });
+
+  return html || "<p></p>";
+}
+
+function setMessageContent(messageEl, role, text) {
+  if (role === "assistant") {
+    messageEl.dataset.rawText = text;
+    messageEl.innerHTML = renderMarkdownToSafeHtml(text);
+  } else {
+    messageEl.textContent = text;
+  }
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -153,14 +255,19 @@ function touchThread(thread) {
 function addMessage(role, text) {
   const messageEl = document.createElement("article");
   messageEl.className = `message ${role}`;
-  messageEl.textContent = text;
+  setMessageContent(messageEl, role, text);
   messagesEl.appendChild(messageEl);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return messageEl;
 }
 
 function appendMessageContent(messageEl, content) {
-  messageEl.textContent += content;
+  if (messageEl.classList.contains("assistant")) {
+    const nextText = (messageEl.dataset.rawText || "") + content;
+    setMessageContent(messageEl, "assistant", nextText);
+  } else {
+    messageEl.textContent += content;
+  }
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
@@ -619,7 +726,7 @@ async function sendChatMessage(userText) {
 
     if (!reply.trim()) {
       reply = "(No response content)";
-      assistantEl.textContent = reply;
+      setMessageContent(assistantEl, "assistant", reply);
     }
 
     thread.history.push({ role: "assistant", content: reply });

@@ -1,13 +1,15 @@
-# LocalLlama
+# Local-Llama
 
-`LocalLlama` is a minimal web app that lets you chat with a locally hosted Ollama server at `http://localhost:11434`.
+`Local-Llama` is a minimal web app that lets you chat with a locally hosted Ollama server at `http://localhost:11434`.
 
 ## Features
 
 - Chat with local Ollama models
 - Streaming token-by-token responses from Ollama
+- Assistant responses rendered as Markdown (headings, lists, code blocks, links)
 - New chat button and per-thread conversation history
 - Thread history and PDF context persistence in browser `localStorage`
+- Per-thread rename/delete actions in the chat list
 - Attach one or more PDFs using the paperclip button in the message composer
 - PDF text is extracted on the server and added as thread context for the model
 - OCR fallback for scanned/image PDFs when normal text extraction is too short
@@ -32,7 +34,7 @@ Copy-Item .env.example .env
 npm start
 ```
 
-Open `http://localhost:3000` in your browser.
+Open `http://localhost:<PORT>` in your browser (default `3000`).
 
 ## PDF notes
 
@@ -42,6 +44,11 @@ Open `http://localhost:3000` in your browser.
 - First OCR run may download language data for `OCR_LANG` (for example `eng`).
 - Current size limit is ~10MB per PDF.
 - Context sent per request is capped at 30,000 characters total (up to 12,000 chars per attached PDF).
+
+## Thread history scope
+
+- Thread history is saved in browser `localStorage` only.
+- Histories are not shared between different users/devices/browsers.
 
 ## Optional environment variables
 

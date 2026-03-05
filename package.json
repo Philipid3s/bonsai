@@ -1,5 +1,5 @@
 {
-  "name": "ollama-client",
+  "name": "local-llama",
   "version": "1.0.0",
   "private": true,
   "description": "Simple web chat app for a local Ollama server",
