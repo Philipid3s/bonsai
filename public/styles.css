@@ -71,6 +71,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .controls select {
@@ -322,6 +323,27 @@ body {
   gap: 0.75rem;
 }
 
+.composer-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.composer-tools .icon-btn {
+  width: 2.5rem;
+}
+
+.tool-icon-btn.active {
+  border-color: #99f6e4;
+  background: #ecfeff;
+  color: #0f766e;
+}
+
+.tool-icon-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .attached-files {
   min-height: 0.5rem;
   display: flex;
@@ -433,6 +455,14 @@ body {
   .composer-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .composer-tools {
+    flex-direction: row;
+  }
+
+  .composer-tools .icon-btn {
+    width: 2.5rem;
   }
 
   .icon-btn {

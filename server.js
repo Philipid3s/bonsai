@@ -31,6 +31,10 @@ const OCR_MAX_PAGES = readIntEnv("OCR_MAX_PAGES", 3, 1);
 const OCR_MIN_TEXT_CHARS = readIntEnv("OCR_MIN_TEXT_CHARS", 80, 0);
 const OCR_IMAGE_SCALE = Number.parseFloat(process.env.OCR_IMAGE_SCALE || "2");
 const SAFE_OCR_IMAGE_SCALE = Number.isFinite(OCR_IMAGE_SCALE) && OCR_IMAGE_SCALE > 0 ? OCR_IMAGE_SCALE : 2;
+const BRAVE_SEARCH_ENABLED = readBoolEnv("BRAVE_SEARCH_ENABLED", false);
+const BRAVE_SEARCH_API_KEY = process.env.BRAVE_SEARCH_API_KEY || "";
+const BRAVE_SEARCH_MAX_RESULTS = readIntEnv("BRAVE_SEARCH_MAX_RESULTS", 5, 1);
+const BRAVE_SEARCH_COUNTRY = (process.env.BRAVE_SEARCH_COUNTRY || "US").toUpperCase();
 let ocrWorkerPromise = null;
 
 const MIME_TYPES = {
@@ -83,6 +87,154 @@ async function runPdfOcr(parser, totalPages) {
     }
   }
   return parts.join("\n\n").trim();
+}
+
+function createHttpError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+function normalizeQueryForIntent(query) {
+  return String(query || "")
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function shouldRunWebSearch(query) {
+  const normalized = normalizeQueryForIntent(query);
+  if (!normalized) return false;
+
+  const smallTalkPatterns = [
+    /^(hi|hello|hey|yo)\b/,
+    /^how are you\b/,
+    /^what s up\b/,
+    /^(thanks|thank you)\b/,
+    /^(good morning|good afternoon|good evening|good night)\b/,
+    /^who are you\b/,
+    /^what can you do\b/
+  ];
+  if (smallTalkPatterns.some((pattern) => pattern.test(normalized))) {
+    return false;
+  }
+
+  const explicitWebPatterns = [
+    /\b(search the web|web search|look up|find online|browse)\b/,
+    /\b(source|sources|reference|references|citation|cite)\b/
+  ];
+  if (explicitWebPatterns.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
+
+  const freshDataPatterns = [
+    /\b(latest|current|today|yesterday|this week|recent)\b/,
+    /\b(news|headline|breaking)\b/,
+    /\b(weather|forecast|temperature)\b/,
+    /\b(price|stock|market cap|exchange rate|score|standings|schedule)\b/,
+    /\b(version|release date|release notes|changelog|updated)\b/,
+    /\b(president|prime minister|ceo)\b/
+  ];
+  return freshDataPatterns.some((pattern) => pattern.test(normalized));
+}
+
+function getLatestUserMessage(messages) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message?.role === "user" && typeof message.content === "string" && message.content.trim()) {
+      return message.content.trim();
+    }
+  }
+  return "";
+}
+
+async function fetchBraveWebResults(query) {
+  const url = new URL("https://api.search.brave.com/res/v1/web/search");
+  url.searchParams.set("q", query);
+  url.searchParams.set("count", String(BRAVE_SEARCH_MAX_RESULTS));
+  url.searchParams.set("country", BRAVE_SEARCH_COUNTRY);
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "X-Subscription-Token": BRAVE_SEARCH_API_KEY
+    }
+  });
+
+  const text = await response.text();
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    payload = { raw: text };
+  }
+
+  if (!response.ok) {
+    const details = payload.error || payload.message || payload.raw || "Brave Search request failed.";
+    throw createHttpError(response.status, String(details));
+  }
+
+  const results = Array.isArray(payload.web?.results) ? payload.web.results : [];
+  return results
+    .slice(0, BRAVE_SEARCH_MAX_RESULTS)
+    .map((item) => ({
+      title: item?.title || "Untitled",
+      url: item?.url || "",
+      description: item?.description || ""
+    }))
+    .filter((item) => item.url);
+}
+
+function buildWebSearchContextMessage(query, results) {
+  if (results.length === 0) {
+    return [
+      `Web search query: ${query}`,
+      "No web results were returned. Do not invent sources.",
+      "If answer confidence is low, say that web results were unavailable."
+    ].join("\n");
+  }
+
+  const lines = [
+    `Web search query: ${query}`,
+    "Use these web search snippets as supporting evidence and cite URLs you used:"
+  ];
+
+  for (const [index, item] of results.entries()) {
+    lines.push(`${index + 1}. ${item.title}`);
+    lines.push(`URL: ${item.url}`);
+    lines.push(`Snippet: ${item.description || "(no snippet)"}`);
+  }
+
+  lines.push("If the answer is not covered by these results, say so clearly.");
+  return lines.join("\n");
+}
+
+async function maybeAugmentMessagesWithWebSearch(messages, webSearchEnabled, webSearchQuery) {
+  if (!webSearchEnabled) return messages;
+
+  const query = typeof webSearchQuery === "string" && webSearchQuery.trim()
+    ? webSearchQuery.trim()
+    : getLatestUserMessage(messages);
+
+  if (!query) {
+    throw createHttpError(400, "Web search enabled but no query text was found.");
+  }
+
+  if (!shouldRunWebSearch(query)) {
+    return messages;
+  }
+
+  if (!BRAVE_SEARCH_ENABLED) {
+    throw createHttpError(400, "Web search is disabled. Set BRAVE_SEARCH_ENABLED=true in .env.");
+  }
+  if (!BRAVE_SEARCH_API_KEY) {
+    throw createHttpError(400, "Missing BRAVE_SEARCH_API_KEY for Brave web search.");
+  }
+
+  const results = await fetchBraveWebResults(query);
+  const contextMessage = buildWebSearchContextMessage(query, results);
+  return [{ role: "system", content: contextMessage }, ...messages];
 }
 
 function readJsonBody(req, maxBytes = MAX_JSON_BYTES) {
@@ -178,12 +330,18 @@ async function handlePdfExtract(req, res) {
 async function handleChatStream(req, res) {
   try {
     const body = await readJsonBody(req);
-    const { model, messages } = body;
+    const { model, messages, webSearchEnabled, webSearchQuery } = body;
 
     if (!model || !Array.isArray(messages) || messages.length === 0) {
       sendJson(res, 400, { error: "model and messages[] are required." });
       return;
     }
+
+    const finalMessages = await maybeAugmentMessagesWithWebSearch(
+      messages,
+      Boolean(webSearchEnabled),
+      webSearchQuery
+    );
 
     const abortController = new AbortController();
     req.on("close", () => abortController.abort());
@@ -193,7 +351,7 @@ async function handleChatStream(req, res) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
-        messages,
+        messages: finalMessages,
         stream: true
       }),
       signal: abortController.signal
@@ -296,26 +454,32 @@ async function handleChatStream(req, res) {
       res.end();
       return;
     }
-    sendJson(res, 500, { error: error.message || "Internal server error" });
+    sendJson(res, Number(error.status) || 500, { error: error.message || "Internal server error" });
   }
 }
 
 async function handleChat(req, res) {
   try {
     const body = await readJsonBody(req);
-    const { model, messages } = body;
+    const { model, messages, webSearchEnabled, webSearchQuery } = body;
 
     if (!model || !Array.isArray(messages) || messages.length === 0) {
       sendJson(res, 400, { error: "model and messages[] are required." });
       return;
     }
 
+    const finalMessages = await maybeAugmentMessagesWithWebSearch(
+      messages,
+      Boolean(webSearchEnabled),
+      webSearchQuery
+    );
+
     const ollamaRes = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
-        messages,
+        messages: finalMessages,
         stream: false
       })
     });
@@ -338,7 +502,7 @@ async function handleChat(req, res) {
 
     sendJson(res, 200, payload);
   } catch (error) {
-    sendJson(res, 500, { error: error.message || "Internal server error" });
+    sendJson(res, Number(error.status) || 500, { error: error.message || "Internal server error" });
   }
 }
 
@@ -428,5 +592,12 @@ server.listen(PORT, HOST, () => {
   console.log(`Proxying Ollama to ${OLLAMA_BASE_URL}`);
   console.log(
     `OCR fallback: ${OCR_ENABLED ? `enabled (lang=${OCR_LANG}, maxPages=${OCR_MAX_PAGES})` : "disabled"}`
+  );
+  console.log(
+    `Brave web search: ${
+      BRAVE_SEARCH_ENABLED
+        ? `enabled (country=${BRAVE_SEARCH_COUNTRY}, maxResults=${BRAVE_SEARCH_MAX_RESULTS})`
+        : "disabled"
+    }`
   );
 });

@@ -39,18 +39,39 @@
           <form id="chat-form" class="composer">
             <div id="attached-files" class="attached-files" aria-live="polite"></div>
             <div class="composer-row">
-              <button id="attach-btn" class="icon-btn" type="button" aria-label="Attach PDF">
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path
-                    d="M8 12.5v5a4 4 0 0 0 8 0v-9a3 3 0 0 0-6 0v8a2 2 0 0 0 4 0V10"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              </button>
+              <div class="composer-tools">
+                <button
+                  id="web-search-btn"
+                  class="icon-btn tool-icon-btn"
+                  type="button"
+                  aria-label="Toggle Web Search"
+                  aria-pressed="false"
+                  title="Web Search"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path
+                      d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 0c2.5 2.7 3.8 6.3 3.8 10S14.5 19.3 12 22m0-20C9.5 4.7 8.2 8.3 8.2 12S9.5 19.3 12 22m-9-10h18M4.5 7h15m-15 10h15"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
+                <button id="attach-btn" class="icon-btn" type="button" aria-label="Attach PDF">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path
+                      d="M8 12.5v5a4 4 0 0 0 8 0v-9a3 3 0 0 0-6 0v8a2 2 0 0 0 4 0V10"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
+              </div>
               <input id="pdf-file" name="pdf-file" type="file" accept="application/pdf,.pdf" hidden />
               <textarea
                 id="prompt"

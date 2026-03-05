@@ -3,6 +3,7 @@ const formEl = document.getElementById("chat-form");
 const promptEl = document.getElementById("prompt");
 const sendBtnEl = document.getElementById("send-btn");
 const modelEl = document.getElementById("model");
+const webSearchBtnEl = document.getElementById("web-search-btn");
 const attachBtnEl = document.getElementById("attach-btn");
 const pdfFileEl = document.getElementById("pdf-file");
 const attachedFilesEl = document.getElementById("attached-files");
@@ -10,6 +11,7 @@ const newChatBtnEl = document.getElementById("new-chat-btn");
 const threadsListEl = document.getElementById("threads-list");
 
 const STORAGE_KEY = "localllama_threads_v1";
+const WEB_SEARCH_TOGGLE_KEY = "localllama_web_search_enabled";
 const MAX_PDF_CONTEXT_CHARS = 12_000;
 const MAX_TOTAL_PDF_CONTEXT_CHARS = 30_000;
 const MAX_STORED_PDF_TEXT_CHARS = 120_000;
@@ -19,6 +21,7 @@ let activeThreadId = null;
 let isSending = false;
 let isPdfLoading = false;
 let storageWarningShown = false;
+let webSearchEnabled = false;
 
 function escapeHtml(value) {
   return String(value)
@@ -124,6 +127,27 @@ function setMessageContent(messageEl, role, text) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function loadWebSearchPreference() {
+  try {
+    return localStorage.getItem(WEB_SEARCH_TOGGLE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function saveWebSearchPreference(enabled) {
+  try {
+    localStorage.setItem(WEB_SEARCH_TOGGLE_KEY, enabled ? "true" : "false");
+  } catch {
+    // Ignore localStorage failures for this preference.
+  }
+}
+
+function applyWebSearchUiState() {
+  webSearchBtnEl.classList.toggle("active", webSearchEnabled);
+  webSearchBtnEl.setAttribute("aria-pressed", webSearchEnabled ? "true" : "false");
 }
 
 function createThread() {
@@ -384,9 +408,11 @@ function updateUiState() {
   sendBtnEl.disabled = disabled;
   promptEl.disabled = isSending || !hasActiveThread;
   modelEl.disabled = isSending;
+  webSearchBtnEl.disabled = isSending;
   attachBtnEl.disabled = disabled;
   newChatBtnEl.disabled = isSending || isPdfLoading;
   sendBtnEl.textContent = isSending ? "Sending..." : "Send";
+  applyWebSearchUiState();
 
   renderThreadsList();
   renderAttachedFiles();
@@ -706,7 +732,9 @@ async function sendChatMessage(userText) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
-        messages: buildChatMessages(thread)
+        messages: buildChatMessages(thread),
+        webSearchEnabled: webSearchEnabled,
+        webSearchQuery: userText
       })
     });
 
@@ -783,6 +811,13 @@ newChatBtnEl.addEventListener("click", () => {
   updateUiState();
 });
 
+webSearchBtnEl.addEventListener("click", () => {
+  if (webSearchBtnEl.disabled) return;
+  webSearchEnabled = !webSearchEnabled;
+  saveWebSearchPreference(webSearchEnabled);
+  applyWebSearchUiState();
+});
+
 threadsListEl.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof Element)) return;
@@ -808,6 +843,9 @@ threadsListEl.addEventListener("click", (event) => {
 if (!loadThreadState()) {
   createAndActivateNewThread();
 }
+
+webSearchEnabled = loadWebSearchPreference();
+applyWebSearchUiState();
 
 renderThreadsList();
 renderMessages();

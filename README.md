@@ -13,6 +13,7 @@
 - Attach one or more PDFs using the paperclip button in the message composer
 - PDF text is extracted on the server and added as thread context for the model
 - OCR fallback for scanned/image PDFs when normal text extraction is too short
+- Optional Brave Web Search grounding with a per-message UI toggle
 
 ## Requirements
 
@@ -50,6 +51,17 @@ Open `http://localhost:<PORT>` in your browser (default `3000`).
 - Thread history is saved in browser `localStorage` only.
 - Histories are not shared between different users/devices/browsers.
 
+## Brave Web Search setup
+
+1. Create a Brave Search API key.
+2. Set these variables in `.env`:
+   - `BRAVE_SEARCH_ENABLED=true`
+   - `BRAVE_SEARCH_API_KEY=<your_key>`
+3. Restart the server.
+4. Enable `Web Search` in the UI before sending a prompt.
+
+When enabled, the app fetches Brave results for the current prompt and injects them as supporting context before calling the model.
+
 ## Optional environment variables
 
 - `PORT` (default `3000`)
@@ -59,6 +71,10 @@ Open `http://localhost:<PORT>` in your browser (default `3000`).
 - `OCR_MAX_PAGES` (default `3`)
 - `OCR_MIN_TEXT_CHARS` (default `80`)
 - `OCR_IMAGE_SCALE` (default `2`)
+- `BRAVE_SEARCH_ENABLED` (default `false`)
+- `BRAVE_SEARCH_API_KEY` (required when web search is enabled)
+- `BRAVE_SEARCH_MAX_RESULTS` (default `5`)
+- `BRAVE_SEARCH_COUNTRY` (default `US`)
 
 Example:
 
