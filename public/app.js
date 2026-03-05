@@ -6,13 +6,149 @@ const modelEl = document.getElementById("model");
 const attachBtnEl = document.getElementById("attach-btn");
 const pdfFileEl = document.getElementById("pdf-file");
 const attachedFilesEl = document.getElementById("attached-files");
+const newChatBtnEl = document.getElementById("new-chat-btn");
+const threadsListEl = document.getElementById("threads-list");
 
-const history = [];
-const pdfContexts = [];
+const STORAGE_KEY = "localllama_threads_v1";
 const MAX_PDF_CONTEXT_CHARS = 12_000;
 const MAX_TOTAL_PDF_CONTEXT_CHARS = 30_000;
+const MAX_STORED_PDF_TEXT_CHARS = 120_000;
+
+let threads = [];
+let activeThreadId = null;
 let isSending = false;
 let isPdfLoading = false;
+let storageWarningShown = false;
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function createThread() {
+  return {
+    id: crypto.randomUUID(),
+    title: "New chat",
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    history: [],
+    pdfContexts: []
+  };
+}
+
+function getActiveThread() {
+  return threads.find((thread) => thread.id === activeThreadId) || null;
+}
+
+function getThreadById(threadId) {
+  return threads.find((thread) => thread.id === threadId) || null;
+}
+
+function moveThreadToTop(threadId) {
+  const idx = threads.findIndex((thread) => thread.id === threadId);
+  if (idx <= 0) return;
+  const [thread] = threads.splice(idx, 1);
+  threads.unshift(thread);
+}
+
+function formatThreadTime(iso) {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function saveThreadState() {
+  try {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        activeThreadId,
+        threads
+      })
+    );
+    storageWarningShown = false;
+    return true;
+  } catch {
+    if (!storageWarningShown) {
+      storageWarningShown = true;
+      addMessage("system", "Could not persist chats to localStorage (likely storage quota reached).");
+    }
+    return false;
+  }
+}
+
+function normalizeThread(rawThread) {
+  if (!rawThread || typeof rawThread !== "object") return null;
+  if (typeof rawThread.id !== "string") return null;
+
+  const history = Array.isArray(rawThread.history)
+    ? rawThread.history
+        .filter((message) => message && typeof message.role === "string" && typeof message.content === "string")
+        .map((message) => ({ role: message.role, content: message.content }))
+    : [];
+
+  const pdfContexts = Array.isArray(rawThread.pdfContexts)
+    ? rawThread.pdfContexts
+        .filter(
+          (ctx) =>
+            ctx &&
+            typeof ctx.id === "string" &&
+            typeof ctx.filename === "string" &&
+            typeof ctx.text === "string"
+        )
+        .map((ctx) => ({
+          id: ctx.id,
+          filename: ctx.filename,
+          pages: ctx.pages ?? null,
+          text: ctx.text
+        }))
+    : [];
+
+  return {
+    id: rawThread.id,
+    title: typeof rawThread.title === "string" ? rawThread.title : "New chat",
+    createdAt: typeof rawThread.createdAt === "string" ? rawThread.createdAt : nowIso(),
+    updatedAt: typeof rawThread.updatedAt === "string" ? rawThread.updatedAt : nowIso(),
+    history,
+    pdfContexts
+  };
+}
+
+function loadThreadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.threads)) {
+      return false;
+    }
+
+    const loadedThreads = parsed.threads.map(normalizeThread).filter(Boolean);
+    if (loadedThreads.length === 0) {
+      return false;
+    }
+
+    threads = loadedThreads;
+    activeThreadId = typeof parsed.activeThreadId === "string" ? parsed.activeThreadId : threads[0].id;
+    if (!threads.some((thread) => thread.id === activeThreadId)) {
+      activeThreadId = threads[0].id;
+    }
+
+    moveThreadToTop(activeThreadId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function touchThread(thread) {
+  thread.updatedAt = nowIso();
+}
 
 function addMessage(role, text) {
   const messageEl = document.createElement("article");
@@ -20,11 +156,35 @@ function addMessage(role, text) {
   messageEl.textContent = text;
   messagesEl.appendChild(messageEl);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+  return messageEl;
+}
+
+function appendMessageContent(messageEl, content) {
+  messageEl.textContent += content;
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function renderMessages() {
+  messagesEl.innerHTML = "";
+  const thread = getActiveThread();
+  if (!thread) return;
+
+  if (thread.history.length === 0) {
+    addMessage("system", "New chat ready. Type a prompt or attach PDFs for context.");
+    return;
+  }
+
+  thread.history.forEach((message) => {
+    addMessage(message.role, message.content);
+  });
 }
 
 function renderAttachedFiles() {
   attachedFilesEl.innerHTML = "";
-  for (const item of pdfContexts) {
+  const thread = getActiveThread();
+  if (!thread) return;
+
+  thread.pdfContexts.forEach((item) => {
     const chipEl = document.createElement("div");
     chipEl.className = "attached-chip";
     chipEl.innerHTML = `
@@ -32,7 +192,7 @@ function renderAttachedFiles() {
       <button type="button" data-id="${item.id}" aria-label="Remove ${item.filename}">x</button>
     `;
     attachedFilesEl.appendChild(chipEl);
-  }
+  });
 
   const canEditAttachments = !(isSending || isPdfLoading);
   attachedFilesEl.querySelectorAll("button").forEach((btn) => {
@@ -40,12 +200,88 @@ function renderAttachedFiles() {
   });
 }
 
+function createThreadActionButton(action, threadId, className, title, svgPath) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.dataset.action = action;
+  button.dataset.threadId = threadId;
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  button.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${svgPath}"/></svg>`;
+  return button;
+}
+
+function renderThreadsList() {
+  threadsListEl.innerHTML = "";
+  const disabled = isSending || isPdfLoading;
+
+  threads.forEach((thread) => {
+    const itemEl = document.createElement("article");
+    itemEl.className = `thread-item ${thread.id === activeThreadId ? "active" : ""}`;
+
+    const rowEl = document.createElement("div");
+    rowEl.className = "thread-item-row";
+
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "thread-open-btn";
+    openBtn.disabled = disabled;
+    openBtn.dataset.action = "open";
+    openBtn.dataset.threadId = thread.id;
+
+    const titleEl = document.createElement("span");
+    titleEl.className = "thread-item-title";
+    titleEl.textContent = thread.title || "New chat";
+    openBtn.appendChild(titleEl);
+
+    const actionsEl = document.createElement("div");
+    actionsEl.className = "thread-item-actions";
+
+    const renameBtn = createThreadActionButton(
+      "rename",
+      thread.id,
+      "thread-mini-btn",
+      "Rename chat",
+      "M3 17.25V21h3.75L17.8 9.95l-3.75-3.75L3 17.25zm14.71-9.04a1 1 0 0 0 0-1.41l-1.51-1.51a1 1 0 0 0-1.41 0l-1.17 1.17 3.75 3.75 1.34-1.99z"
+    );
+    renameBtn.disabled = disabled;
+
+    const deleteBtn = createThreadActionButton(
+      "delete",
+      thread.id,
+      "thread-mini-btn delete",
+      "Delete chat",
+      "M9 3h6l1 2h4v2H4V5h4l1-2zm1 6h2v9h-2V9zm4 0h2v9h-2V9zM7 9h2v9H7V9z"
+    );
+    deleteBtn.disabled = disabled;
+
+    actionsEl.appendChild(renameBtn);
+    actionsEl.appendChild(deleteBtn);
+    rowEl.appendChild(openBtn);
+    rowEl.appendChild(actionsEl);
+
+    const metaEl = document.createElement("span");
+    metaEl.className = "thread-item-meta";
+    metaEl.textContent = `${thread.history.length} msg | ${formatThreadTime(thread.updatedAt)}`;
+
+    itemEl.appendChild(rowEl);
+    itemEl.appendChild(metaEl);
+    threadsListEl.appendChild(itemEl);
+  });
+}
+
 function updateUiState() {
-  sendBtnEl.disabled = isSending || isPdfLoading;
-  promptEl.disabled = isSending;
+  const hasActiveThread = Boolean(getActiveThread());
+  const disabled = isSending || isPdfLoading || !hasActiveThread;
+  sendBtnEl.disabled = disabled;
+  promptEl.disabled = isSending || !hasActiveThread;
   modelEl.disabled = isSending;
-  attachBtnEl.disabled = isSending || isPdfLoading;
+  attachBtnEl.disabled = disabled;
+  newChatBtnEl.disabled = isSending || isPdfLoading;
   sendBtnEl.textContent = isSending ? "Sending..." : "Send";
+
+  renderThreadsList();
   renderAttachedFiles();
 }
 
@@ -59,6 +295,69 @@ function setPdfLoadingState(nextValue) {
   updateUiState();
 }
 
+function setActiveThread(threadId) {
+  if (!threads.some((thread) => thread.id === threadId)) return;
+  activeThreadId = threadId;
+  moveThreadToTop(threadId);
+  saveThreadState();
+  renderThreadsList();
+  renderMessages();
+  renderAttachedFiles();
+}
+
+function createAndActivateNewThread() {
+  const thread = createThread();
+  threads.unshift(thread);
+  activeThreadId = thread.id;
+  saveThreadState();
+  renderThreadsList();
+  renderMessages();
+  renderAttachedFiles();
+  promptEl.focus();
+}
+
+function renameThreadById(threadId) {
+  const thread = getThreadById(threadId);
+  if (!thread) return;
+
+  const nextTitle = window.prompt("Rename chat", thread.title || "New chat");
+  if (nextTitle === null) return;
+
+  const cleaned = nextTitle.trim().replace(/\s+/g, " ");
+  if (!cleaned) return;
+
+  thread.title = cleaned.length > 80 ? `${cleaned.slice(0, 80)}...` : cleaned;
+  touchThread(thread);
+  moveThreadToTop(thread.id);
+  saveThreadState();
+  renderThreadsList();
+}
+
+function deleteThreadById(threadId) {
+  const thread = getThreadById(threadId);
+  if (!thread) return;
+
+  const confirmed = window.confirm(`Delete chat "${thread.title || "New chat"}"?`);
+  if (!confirmed) return;
+
+  const wasActive = thread.id === activeThreadId;
+  threads = threads.filter((item) => item.id !== thread.id);
+
+  if (threads.length === 0) {
+    createAndActivateNewThread();
+    return;
+  }
+
+  if (wasActive) {
+    activeThreadId = threads[0].id;
+    renderMessages();
+    renderAttachedFiles();
+  }
+
+  saveThreadState();
+  renderThreadsList();
+}
+
 function toBase64(arrayBuffer) {
   const bytes = new Uint8Array(arrayBuffer);
   const chunkSize = 0x8000;
@@ -70,9 +369,9 @@ function toBase64(arrayBuffer) {
   return btoa(binary);
 }
 
-function buildChatMessages() {
-  if (!pdfContexts.length) {
-    return history;
+function buildChatMessages(thread) {
+  if (!thread.pdfContexts.length) {
+    return thread.history;
   }
 
   const contextMessages = [
@@ -86,7 +385,7 @@ function buildChatMessages() {
   let remainingChars = MAX_TOTAL_PDF_CONTEXT_CHARS;
   let truncatedCount = 0;
 
-  for (const ctx of pdfContexts) {
+  for (const ctx of thread.pdfContexts) {
     if (remainingChars <= 0) {
       truncatedCount += 1;
       continue;
@@ -119,7 +418,41 @@ function buildChatMessages() {
     });
   }
 
-  return [...contextMessages, ...history];
+  return [...contextMessages, ...thread.history];
+}
+
+async function consumeSseStream(response, onEvent) {
+  if (!response.body) {
+    throw new Error("Missing response stream.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    let boundaryIndex = buffer.indexOf("\n\n");
+    while (boundaryIndex !== -1) {
+      const block = buffer.slice(0, boundaryIndex).trim();
+      buffer = buffer.slice(boundaryIndex + 2);
+      if (block) {
+        const dataLines = block
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trimStart());
+
+        if (dataLines.length > 0) {
+          const payload = JSON.parse(dataLines.join("\n"));
+          onEvent(payload);
+        }
+      }
+      boundaryIndex = buffer.indexOf("\n\n");
+    }
+  }
 }
 
 async function loadModels() {
@@ -142,8 +475,6 @@ async function loadModels() {
       }
       modelEl.appendChild(option);
     });
-
-    addMessage("system", "Connected. Start chatting with your selected model.");
   } catch (error) {
     addMessage("system", `Could not load models: ${error.message}`);
   }
@@ -151,6 +482,8 @@ async function loadModels() {
 
 async function attachPdf(file) {
   if (!file) return;
+  const thread = getActiveThread();
+  if (!thread) return;
 
   const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
   if (!isPdf) {
@@ -178,21 +511,35 @@ async function attachPdf(file) {
       throw new Error(data.error || "Could not extract text from PDF.");
     }
 
-    pdfContexts.push({
+    const rawText = data.text || "";
+    const trimmedText = rawText.slice(0, MAX_STORED_PDF_TEXT_CHARS);
+    const storageTrimmed = rawText.length > MAX_STORED_PDF_TEXT_CHARS;
+
+    thread.pdfContexts.push({
       id: crypto.randomUUID(),
       filename: data.filename || file.name,
       pages: data.pages,
-      text: data.text || ""
+      text: trimmedText
     });
+    touchThread(thread);
+    moveThreadToTop(thread.id);
+    saveThreadState();
+    renderThreadsList();
     renderAttachedFiles();
 
-    const attached = pdfContexts[pdfContexts.length - 1];
-    const truncated = attached.text.length > MAX_PDF_CONTEXT_CHARS;
+    const attached = thread.pdfContexts[thread.pdfContexts.length - 1];
+    const contextTruncated = attached.text.length > MAX_PDF_CONTEXT_CHARS;
+    const extractionInfo =
+      data.extractionMethod === "ocr"
+        ? " OCR fallback was used."
+        : data.extractionMethod === "mixed"
+          ? " OCR fallback supplemented extracted text."
+          : "";
     addMessage(
       "system",
-      `Attached "${attached.filename}" to this thread (${attached.pages ?? "?"} pages). ${
-        truncated ? `Text may be truncated for context limits.` : "Text context is ready."
-      }`
+      `Attached "${attached.filename}" (${attached.pages ?? "?"} pages). ${
+        contextTruncated ? "Text may be truncated at prompt time." : "Text context is ready."
+      }${extractionInfo}${storageTrimmed ? " Stored text was truncated to keep local history size manageable." : ""}`
     );
   } catch (error) {
     addMessage("system", `PDF attach error: ${error.message}`);
@@ -203,46 +550,94 @@ async function attachPdf(file) {
 }
 
 function removePdfContext(id) {
-  const index = pdfContexts.findIndex((doc) => doc.id === id);
+  const thread = getActiveThread();
+  if (!thread) return;
+
+  const index = thread.pdfContexts.findIndex((doc) => doc.id === id);
   if (index === -1) return;
-  const [removed] = pdfContexts.splice(index, 1);
+
+  const [removed] = thread.pdfContexts.splice(index, 1);
+  touchThread(thread);
+  saveThreadState();
+  renderThreadsList();
   renderAttachedFiles();
   addMessage("system", `Removed "${removed.filename}" from thread context.`);
 }
 
+function maybeUpdateThreadTitle(thread, userText) {
+  if (thread.title !== "New chat") return;
+  const normalized = userText.trim().replace(/\s+/g, " ");
+  if (!normalized) return;
+  thread.title = normalized.length > 48 ? `${normalized.slice(0, 48)}...` : normalized;
+}
+
 async function sendChatMessage(userText) {
+  const thread = getActiveThread();
   const model = modelEl.value;
+  if (!thread) return;
+
   if (!model) {
     addMessage("system", "Select a model before sending a message.");
     return;
   }
 
-  history.push({ role: "user", content: userText });
+  maybeUpdateThreadTitle(thread, userText);
+  thread.history.push({ role: "user", content: userText });
+  touchThread(thread);
+  moveThreadToTop(thread.id);
+  saveThreadState();
+  renderThreadsList();
   addMessage("user", userText);
 
   setSendingState(true);
+  const assistantEl = addMessage("assistant", "");
+  let reply = "";
 
   try {
-    const res = await fetch("/api/chat", {
+    const res = await fetch("/api/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
-        messages: buildChatMessages()
+        messages: buildChatMessages(thread)
       })
     });
 
-    const data = await res.json();
     if (!res.ok) {
+      const data = await res.json();
       throw new Error(data.error || "Chat request failed");
     }
 
-    const reply = data.message?.content || "(No response content)";
-    history.push({ role: "assistant", content: reply });
-    addMessage("assistant", reply);
+    await consumeSseStream(res, (event) => {
+      if (event.type === "token" && event.content) {
+        reply += event.content;
+        appendMessageContent(assistantEl, event.content);
+      } else if (event.type === "error") {
+        throw new Error(event.error || "Chat stream failed");
+      }
+    });
+
+    if (!reply.trim()) {
+      reply = "(No response content)";
+      assistantEl.textContent = reply;
+    }
+
+    thread.history.push({ role: "assistant", content: reply });
+    touchThread(thread);
+    moveThreadToTop(thread.id);
+    saveThreadState();
+    renderThreadsList();
   } catch (error) {
-    addMessage("system", `Error: ${error.message}`);
-    history.pop();
+    if (reply.trim()) {
+      thread.history.push({ role: "assistant", content: reply });
+      touchThread(thread);
+      saveThreadState();
+      renderThreadsList();
+      addMessage("system", `Stream interrupted: ${error.message}`);
+    } else {
+      assistantEl.remove();
+      addMessage("system", `Error: ${error.message}`);
+    }
   } finally {
     setSendingState(false);
   }
@@ -275,5 +670,40 @@ attachedFilesEl.addEventListener("click", (event) => {
   removePdfContext(target.dataset.id);
 });
 
+newChatBtnEl.addEventListener("click", () => {
+  if (newChatBtnEl.disabled) return;
+  createAndActivateNewThread();
+  updateUiState();
+});
+
+threadsListEl.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+
+  const actionBtn = target.closest("button[data-action]");
+  if (!actionBtn || actionBtn.disabled) return;
+
+  const threadId = actionBtn.dataset.threadId;
+  const action = actionBtn.dataset.action;
+  if (!threadId || !action) return;
+
+  if (action === "open") {
+    setActiveThread(threadId);
+  } else if (action === "rename") {
+    renameThreadById(threadId);
+  } else if (action === "delete") {
+    deleteThreadById(threadId);
+  }
+
+  updateUiState();
+});
+
+if (!loadThreadState()) {
+  createAndActivateNewThread();
+}
+
+renderThreadsList();
+renderMessages();
+renderAttachedFiles();
 updateUiState();
 loadModels();

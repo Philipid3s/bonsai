@@ -1,0 +1,11 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+*.log
+*.tmp
+tmp/
+temp/
+dist/
+coverage/
+*.traineddata

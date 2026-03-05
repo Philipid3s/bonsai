@@ -5,8 +5,12 @@
 ## Features
 
 - Chat with local Ollama models
+- Streaming token-by-token responses from Ollama
+- New chat button and per-thread conversation history
+- Thread history and PDF context persistence in browser `localStorage`
 - Attach one or more PDFs using the paperclip button in the message composer
 - PDF text is extracted on the server and added as thread context for the model
+- OCR fallback for scanned/image PDFs when normal text extraction is too short
 
 ## Requirements
 
@@ -20,6 +24,10 @@ ollama pull llama3.2
 
 ## Run
 
+```powershell
+Copy-Item .env.example .env
+```
+
 ```bash
 npm start
 ```
@@ -30,6 +38,8 @@ Open `http://localhost:3000` in your browser.
 
 - Raw PDF files are not directly understood by text-only models like `qwen3:8b`.
 - This app extracts text from the PDF first, then sends the extracted text to the model.
+- If extracted text is below a threshold, OCR fallback runs on the first PDF pages.
+- First OCR run may download language data for `OCR_LANG` (for example `eng`).
 - Current size limit is ~10MB per PDF.
 - Context sent per request is capped at 30,000 characters total (up to 12,000 chars per attached PDF).
 
@@ -37,6 +47,11 @@ Open `http://localhost:3000` in your browser.
 
 - `PORT` (default `3000`)
 - `OLLAMA_BASE_URL` (default `http://localhost:11434`)
+- `OCR_ENABLED` (default `true`)
+- `OCR_LANG` (default `eng`)
+- `OCR_MAX_PAGES` (default `3`)
+- `OCR_MIN_TEXT_CHARS` (default `80`)
+- `OCR_IMAGE_SCALE` (default `2`)
 
 Example:
 
