@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LocalLlama</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div class="topbar-brand">
+          <h1>LocalLlama</h1>
+          <small>
+            by Julien Regnault ·
+            <a href="https://github.com/Philipid3s" target="_blank" rel="noreferrer noopener">
+              github.com/Philipid3s
+            </a>
+          </small>
+        </div>
+        <div class="controls">
+          <label for="model">Model</label>
+          <select id="model" name="model"></select>
+        </div>
+      </header>
+
+      <section id="messages" class="messages" aria-live="polite"></section>
+
+      <form id="chat-form" class="composer">
+        <div id="attached-files" class="attached-files" aria-live="polite"></div>
+        <div class="composer-row">
+          <button id="attach-btn" class="icon-btn" type="button" aria-label="Attach PDF">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                d="M8 12.5v5a4 4 0 0 0 8 0v-9a3 3 0 0 0-6 0v8a2 2 0 0 0 4 0V10"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+          <input id="pdf-file" name="pdf-file" type="file" accept="application/pdf,.pdf" hidden />
+          <textarea
+            id="prompt"
+            name="prompt"
+            rows="3"
+            placeholder="Type your message..."
+            required
+          ></textarea>
+          <button id="send-btn" type="submit">Send</button>
+        </div>
+      </form>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
