@@ -237,33 +237,38 @@ body {
   padding: 0.7rem 0.8rem;
   border-radius: 0.65rem;
   max-width: 90%;
-  white-space: pre-wrap;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .message.user {
   align-self: flex-end;
   background: #d1fae5;
+  white-space: pre-wrap;
 }
 
 .message.assistant {
   align-self: flex-start;
   background: #eff6ff;
+  color: #1f2937;
 }
 
 .message.assistant p,
 .message.assistant ul,
+.message.assistant ol,
 .message.assistant pre,
+.message.assistant blockquote,
 .message.assistant h1,
 .message.assistant h2,
 .message.assistant h3,
 .message.assistant h4 {
-  margin: 0 0 0.5rem;
+  margin: 0 0 0.75rem;
 }
 
 .message.assistant p:last-child,
 .message.assistant ul:last-child,
+.message.assistant ol:last-child,
 .message.assistant pre:last-child,
+.message.assistant blockquote:last-child,
 .message.assistant h1:last-child,
 .message.assistant h2:last-child,
 .message.assistant h3:last-child,
@@ -275,31 +280,44 @@ body {
 .message.assistant h2,
 .message.assistant h3,
 .message.assistant h4 {
-  font-size: 1rem;
+  margin-top: 1rem;
+  line-height: 1.2;
 }
 
-.message.assistant ul {
-  padding-left: 1.2rem;
+.message.assistant h1 { font-size: 1.25rem; }
+.message.assistant h2 { font-size: 1.15rem; }
+.message.assistant h3 { font-size: 1.05rem; }
+.message.assistant h4 { font-size: 1rem; }
+
+.message.assistant ul,
+.message.assistant ol {
+  padding-left: 1.5rem;
 }
 
 .message.assistant code {
-  font-family: Consolas, "Courier New", monospace;
-  font-size: 0.9em;
-  background: #dbeafe;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.85em;
+  background: rgba(0, 0, 0, 0.05);
   border-radius: 0.3rem;
-  padding: 0.05rem 0.25rem;
+  padding: 0.1rem 0.3rem;
 }
 
 .message.assistant pre {
-  background: #dbeafe;
+  background: #1e293b;
+  color: #f8fafc;
   border-radius: 0.5rem;
-  padding: 0.6rem;
+  padding: 1rem;
   overflow-x: auto;
+  border: 1px solid #334155;
 }
 
 .message.assistant pre code {
   background: transparent;
   padding: 0;
+  font-size: 0.85rem;
+  color: inherit;
+  display: block;
+  line-height: 1.6;
 }
 
 .message.assistant a {

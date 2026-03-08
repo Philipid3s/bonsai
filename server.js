@@ -9,6 +9,7 @@ const HOST = "0.0.0.0";
 const PORT = Number(process.env.PORT || 3000);
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 const PUBLIC_DIR = path.join(__dirname, "public");
+const NODE_MODULES_DIR = path.join(__dirname, "node_modules");
 const MAX_JSON_BYTES = 1_000_000;
 const MAX_PDF_JSON_BYTES = 15_000_000;
 const MAX_PDF_BYTES = 10_000_000;

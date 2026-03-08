@@ -23,6 +23,25 @@ let isPdfLoading = false;
 let storageWarningShown = false;
 let webSearchEnabled = false;
 
+// Global Markdown configuration
+if (typeof marked !== "undefined") {
+  const mh = window.markedHighlight;
+  if (mh && typeof hljs !== "undefined") {
+    marked.use(mh.markedHighlight({
+      emptyLangClass: 'hljs',
+      langPrefix: 'hljs language-',
+      highlight(code, lang) {
+        const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+        return hljs.highlight(code, { language }).value;
+      }
+    }));
+  }
+  marked.setOptions({
+    breaks: true,
+    gfm: true
+  });
+}
+
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, "&amp;")
@@ -32,88 +51,17 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-function formatInlineMarkdown(value) {
-  const inlineCodeTokens = [];
-  let output = value.replace(/`([^`\n]+)`/g, (_match, code) => {
-    const token = `__INLINE_CODE_${inlineCodeTokens.length}__`;
-    inlineCodeTokens.push(`<code>${code}</code>`);
-    return token;
-  });
-
-  output = output.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, text, url) => {
-    return `<a href="${url}" target="_blank" rel="noreferrer noopener">${text}</a>`;
-  });
-  output = output.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  output = output.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
-
-  inlineCodeTokens.forEach((html, index) => {
-    output = output.replace(`__INLINE_CODE_${index}__`, html);
-  });
-
-  return output;
-}
-
 function renderMarkdownToSafeHtml(markdownText) {
-  const codeBlockTokens = [];
-  let text = escapeHtml(markdownText || "").replace(/\r\n/g, "\n");
-
-  text = text.replace(/```([a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g, (_match, lang, code) => {
-    const token = `__CODE_BLOCK_${codeBlockTokens.length}__`;
-    const className = lang ? ` class="language-${lang}"` : "";
-    codeBlockTokens.push(`<pre><code${className}>${code}</code></pre>`);
-    return token;
-  });
-
-  const lines = text.split("\n");
-  const htmlParts = [];
-  let inList = false;
-
-  for (const rawLine of lines) {
-    const trimmed = rawLine.trim();
-    const listMatch = rawLine.match(/^\s*[-*]\s+(.+)$/);
-    if (listMatch) {
-      if (!inList) {
-        inList = true;
-        htmlParts.push("<ul>");
-      }
-      htmlParts.push(`<li>${formatInlineMarkdown(listMatch[1])}</li>`);
-      continue;
-    }
-
-    if (inList) {
-      inList = false;
-      htmlParts.push("</ul>");
-    }
-
-    if (!trimmed) {
-      continue;
-    }
-
-    const headingMatch = trimmed.match(/^(#{1,4})\s+(.+)$/);
-    if (headingMatch) {
-      const level = headingMatch[1].length;
-      htmlParts.push(`<h${level}>${formatInlineMarkdown(headingMatch[2])}</h${level}>`);
-      continue;
-    }
-
-    if (/^__CODE_BLOCK_\d+__$/.test(trimmed)) {
-      htmlParts.push(trimmed);
-      continue;
-    }
-
-    htmlParts.push(`<p>${formatInlineMarkdown(trimmed)}</p>`);
+  if (typeof marked === "undefined") {
+    return `<p>${markdownText}</p>`;
   }
 
-  if (inList) {
-    htmlParts.push("</ul>");
+  try {
+    return marked.parse(markdownText);
+  } catch (e) {
+    console.error("Markdown parse error:", e);
+    return `<p>${markdownText}</p>`;
   }
-
-  let html = htmlParts.join("\n");
-  codeBlockTokens.forEach((blockHtml, index) => {
-    html = html.replace(`__CODE_BLOCK_${index}__`, blockHtml);
-  });
-
-  return html || "<p></p>";
 }
 
 function setMessageContent(messageEl, role, text) {
