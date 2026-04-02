@@ -9,3 +9,4 @@ temp/
 dist/
 coverage/
 *.traineddata
+chroma-data/

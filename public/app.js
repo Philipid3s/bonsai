@@ -3,9 +3,14 @@ const formEl = document.getElementById("chat-form");
 const promptEl = document.getElementById("prompt");
 const sendBtnEl = document.getElementById("send-btn");
 const modelEl = document.getElementById("model");
+const vectorInstanceEl = document.getElementById("vector-instance");
+const vectorLibraryBtnEl = document.getElementById("vector-library-btn");
 const webSearchBtnEl = document.getElementById("web-search-btn");
+const vectorSearchBtnEl = document.getElementById("vector-search-btn");
 const attachBtnEl = document.getElementById("attach-btn");
+const libraryBtnEl = document.getElementById("library-btn");
 const pdfFileEl = document.getElementById("pdf-file");
+const libraryFileEl = document.getElementById("library-file");
 const attachedFilesEl = document.getElementById("attached-files");
 const newChatBtnEl = document.getElementById("new-chat-btn");
 const threadsListEl = document.getElementById("threads-list");
@@ -13,15 +18,23 @@ const confirmModalEl = document.getElementById("confirm-modal");
 const confirmModalDescriptionEl = document.getElementById("confirm-modal-description");
 const confirmCancelBtnEl = document.getElementById("confirm-cancel-btn");
 const confirmDeleteBtnEl = document.getElementById("confirm-delete-btn");
+const vectorLibraryModalEl = document.getElementById("vector-library-modal");
+const vectorLibraryCloseBtnEl = document.getElementById("vector-library-close-btn");
+const vectorLibraryTestBtnEl = document.getElementById("vector-library-test-btn");
+const vectorLibraryStatusEl = document.getElementById("vector-library-status");
+const vectorLibraryTestResultEl = document.getElementById("vector-library-test-result");
+const vectorLibraryStatsEl = document.getElementById("vector-library-stats");
+const vectorLibraryDocsEl = document.getElementById("vector-library-docs");
 
 const STORAGE_KEY = "bonsai_threads_v1";
 const WEB_SEARCH_TOGGLE_KEY = "bonsai_web_search_enabled";
+const VECTOR_SEARCH_TOGGLE_KEY = "bonsai_vector_search_enabled";
 const MODEL_SELECTION_KEY = "bonsai_selected_model";
+const VECTOR_INSTANCE_SELECTION_KEY = "bonsai_selected_vector_instance";
 const LEGACY_STORAGE_KEY = "localllama_threads_v1";
 const LEGACY_WEB_SEARCH_TOGGLE_KEY = "localllama_web_search_enabled";
 const LEGACY_MODEL_SELECTION_KEY = "localllama_selected_model";
-const MAX_PDF_CONTEXT_CHARS = 12_000;
-const MAX_TOTAL_PDF_CONTEXT_CHARS = 30_000;
+const MAX_PDF_TEXT_WARNING_CHARS = 12_000;
 const MAX_STORED_PDF_TEXT_CHARS = 120_000;
 
 let threads = [];
@@ -30,8 +43,12 @@ let isSending = false;
 let isPdfLoading = false;
 let storageWarningShown = false;
 let webSearchEnabled = false;
+let vectorSearchEnabled = false;
 let renamingThreadId = null;
 let pendingDeleteThreadId = null;
+let vectorInstances = [];
+let isVectorLibraryLoading = false;
+let isVectorConnectionTesting = false;
 
 // Global Markdown configuration
 if (typeof marked !== "undefined") {
@@ -129,6 +146,18 @@ function saveWebSearchPreference(enabled) {
   }
 }
 
+function loadVectorSearchPreference() {
+  return readLocalStorage(VECTOR_SEARCH_TOGGLE_KEY) === "true";
+}
+
+function saveVectorSearchPreference(enabled) {
+  try {
+    localStorage.setItem(VECTOR_SEARCH_TOGGLE_KEY, enabled ? "true" : "false");
+  } catch {
+    // Ignore localStorage failures for this preference.
+  }
+}
+
 function loadSelectedModelPreference() {
   return migrateLegacyStorageKey(MODEL_SELECTION_KEY, LEGACY_MODEL_SELECTION_KEY) || "";
 }
@@ -141,9 +170,30 @@ function saveSelectedModelPreference(model) {
   }
 }
 
+function loadSelectedVectorInstancePreference() {
+  return readLocalStorage(VECTOR_INSTANCE_SELECTION_KEY) || "";
+}
+
+function saveSelectedVectorInstancePreference(instanceId) {
+  try {
+    localStorage.setItem(VECTOR_INSTANCE_SELECTION_KEY, String(instanceId || ""));
+  } catch {
+    // Ignore localStorage failures for this preference.
+  }
+}
+
 function applyWebSearchUiState() {
   webSearchBtnEl.classList.toggle("active", webSearchEnabled);
   webSearchBtnEl.setAttribute("aria-pressed", webSearchEnabled ? "true" : "false");
+}
+
+function applyVectorSearchUiState() {
+  vectorSearchBtnEl.classList.toggle("active", vectorSearchEnabled);
+  vectorSearchBtnEl.setAttribute("aria-pressed", vectorSearchEnabled ? "true" : "false");
+}
+
+function getSelectedVectorInstanceId() {
+  return vectorInstanceEl.value || vectorInstances[0]?.id || "";
 }
 
 function createThread() {
@@ -226,7 +276,10 @@ function normalizeThread(rawThread) {
           id: ctx.id,
           filename: ctx.filename,
           pages: ctx.pages ?? null,
-          text: ctx.text
+          text: ctx.text,
+          extractionMethod: typeof ctx.extractionMethod === "string" ? ctx.extractionMethod : "text",
+          ingestedAt: typeof ctx.ingestedAt === "string" ? ctx.ingestedAt : null,
+          chunkCount: Number.isFinite(ctx.chunkCount) ? ctx.chunkCount : null
         }))
     : [];
 
@@ -297,7 +350,7 @@ function renderMessages() {
   if (!thread) return;
 
   if (thread.history.length === 0) {
-    addMessage("system", "New chat ready. Type a prompt or attach PDFs for context.");
+    addMessage("system", "New chat ready. Attach a PDF for session context or add a PDF to the knowledge base.");
     return;
   }
 
@@ -316,16 +369,28 @@ function renderAttachedFiles() {
     chipEl.className = "attached-chip";
 
     const labelEl = document.createElement("span");
+    labelEl.className = "attached-chip-title";
     labelEl.textContent = `${item.filename} (${item.pages ?? "?"}p)`;
+
+    const statusEl = document.createElement("span");
+    statusEl.className = "attached-chip-status pending";
+    statusEl.textContent = "Current chat";
+
+    const actionsEl = document.createElement("div");
+    actionsEl.className = "attached-chip-actions";
 
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.dataset.id = item.id;
+    removeBtn.dataset.action = "remove";
+    removeBtn.className = "attached-chip-btn";
     removeBtn.setAttribute("aria-label", `Remove ${item.filename}`);
-    removeBtn.textContent = "x";
+    removeBtn.textContent = "Remove";
 
+    actionsEl.appendChild(removeBtn);
     chipEl.appendChild(labelEl);
-    chipEl.appendChild(removeBtn);
+    chipEl.appendChild(statusEl);
+    chipEl.appendChild(actionsEl);
     attachedFilesEl.appendChild(chipEl);
   });
 
@@ -526,17 +591,24 @@ function renderThreadsList() {
 function updateUiState() {
   const hasActiveThread = Boolean(getActiveThread());
   const modalOpen = pendingDeleteThreadId !== null;
+  const libraryModalOpen = !vectorLibraryModalEl.classList.contains("hidden");
   const disabled = isSending || isPdfLoading || !hasActiveThread || modalOpen;
   sendBtnEl.disabled = disabled;
-  promptEl.disabled = isSending || !hasActiveThread || modalOpen;
-  modelEl.disabled = isSending || modalOpen;
-  webSearchBtnEl.disabled = isSending || modalOpen;
-  attachBtnEl.disabled = disabled;
-  newChatBtnEl.disabled = isSending || isPdfLoading || modalOpen;
+  promptEl.disabled = isSending || !hasActiveThread || modalOpen || libraryModalOpen;
+  modelEl.disabled = isSending || modalOpen || libraryModalOpen;
+  vectorInstanceEl.disabled = isSending || isPdfLoading || modalOpen || libraryModalOpen || vectorInstances.length === 0;
+  vectorLibraryBtnEl.disabled = isSending || isPdfLoading || modalOpen || vectorInstances.length === 0 || isVectorLibraryLoading;
+  vectorLibraryTestBtnEl.disabled = isSending || isPdfLoading || modalOpen || isVectorLibraryLoading || isVectorConnectionTesting;
+  webSearchBtnEl.disabled = isSending || modalOpen || libraryModalOpen;
+  vectorSearchBtnEl.disabled = isSending || modalOpen || libraryModalOpen || vectorInstances.length === 0;
+  attachBtnEl.disabled = disabled || libraryModalOpen;
+  libraryBtnEl.disabled = isSending || isPdfLoading || modalOpen || libraryModalOpen || vectorInstances.length === 0;
+  newChatBtnEl.disabled = isSending || isPdfLoading || modalOpen || libraryModalOpen;
   sendBtnEl.textContent = isSending ? "Sending..." : "Send";
   confirmCancelBtnEl.disabled = isSending || isPdfLoading;
   confirmDeleteBtnEl.disabled = isSending || isPdfLoading;
   applyWebSearchUiState();
+  applyVectorSearchUiState();
 
   renderThreadsList();
   renderAttachedFiles();
@@ -621,11 +693,11 @@ function buildChatMessages(thread) {
     {
       role: "system",
       content:
-        "Use the attached PDF text as context for this thread. If context does not contain the answer, say so clearly."
+        "Use the attached PDF text as session-only context for this chat. If the attachment does not contain the answer, say so clearly."
     }
   ];
 
-  let remainingChars = MAX_TOTAL_PDF_CONTEXT_CHARS;
+  let remainingChars = 30_000;
   let truncatedCount = 0;
 
   for (const ctx of thread.pdfContexts) {
@@ -634,7 +706,7 @@ function buildChatMessages(thread) {
       continue;
     }
 
-    const availableChars = Math.min(MAX_PDF_CONTEXT_CHARS, remainingChars);
+    const availableChars = Math.min(12_000, remainingChars);
     const textForModel = ctx.text.slice(0, availableChars);
     const isTruncated = ctx.text.length > availableChars;
     if (isTruncated) {
@@ -657,7 +729,7 @@ function buildChatMessages(thread) {
   if (truncatedCount > 0) {
     contextMessages.push({
       role: "system",
-      content: `${truncatedCount} attached document(s) were partially or fully truncated due to context limits.`
+      content: `${truncatedCount} attached PDF document(s) were partially or fully truncated due to session context limits.`
     });
   }
 
@@ -695,6 +767,180 @@ async function consumeSseStream(response, onEvent) {
       }
       boundaryIndex = buffer.indexOf("\n\n");
     }
+  }
+}
+
+function formatCount(value) {
+  return Number(value || 0).toLocaleString();
+}
+
+function renderVectorLibraryOverview(data) {
+  const instance = data.instance || {};
+  const stats = data.stats || {};
+  const documents = Array.isArray(data.documents) ? data.documents : [];
+
+  vectorLibraryStatusEl.textContent = `${instance.name || "Knowledge Base"} · ${instance.type || "Vector DB"} · ${
+    instance.ssl ? "https" : "http"
+  }://${instance.host || "localhost"}:${instance.port ?? "?"} · ${instance.collection || "collection"}`;
+
+  vectorLibraryStatsEl.innerHTML = `
+    <article class="library-stat-card">
+      <span class="library-stat-label">Documents</span>
+      <strong class="library-stat-value">${formatCount(stats.documentCount)}</strong>
+    </article>
+    <article class="library-stat-card">
+      <span class="library-stat-label">Chunks</span>
+      <strong class="library-stat-value">${formatCount(stats.chunkCount)}</strong>
+    </article>
+    <article class="library-stat-card">
+      <span class="library-stat-label">Characters</span>
+      <strong class="library-stat-value">${formatCount(stats.totalChars)}</strong>
+    </article>
+  `;
+
+  if (!documents.length) {
+    vectorLibraryDocsEl.innerHTML = `<div class="library-empty">No indexed documents found in this knowledge base.</div>`;
+    return;
+  }
+
+  vectorLibraryDocsEl.innerHTML = documents.map((doc) => `
+    <article class="library-doc-item">
+      <div class="library-doc-main">
+        <strong class="library-doc-title">${escapeHtml(doc.filename)}</strong>
+        <span class="library-doc-meta">ID: ${escapeHtml(doc.documentId)}</span>
+      </div>
+      <div class="library-doc-side">
+        <div class="library-doc-metrics">
+          <span>${doc.pages == null ? "?" : formatCount(doc.pages)}p</span>
+          <span>${formatCount(doc.chunkCount)} chunks</span>
+          <span>${formatCount(doc.totalChars)} chars</span>
+        </div>
+        <button
+          type="button"
+          class="attached-chip-btn library-delete-btn"
+          data-action="delete-library-doc"
+          data-document-id="${escapeHtml(doc.documentId)}"
+          data-filename="${escapeHtml(doc.filename)}"
+        >
+          Delete
+        </button>
+      </div>
+    </article>
+  `).join("");
+}
+
+function renderVectorConnectionTestResult(data) {
+  const instance = data.instance || {};
+  const heartbeat = data.checks?.heartbeat || {};
+  const collection = data.checks?.collection || {};
+
+  vectorLibraryTestResultEl.classList.remove("hidden", "ok", "error");
+  vectorLibraryTestResultEl.classList.add(data.ok ? "ok" : "error");
+  vectorLibraryTestResultEl.innerHTML = `
+    <strong>Connection test: ${data.ok ? "OK" : "Failed"}</strong>
+    <div>Type: ${escapeHtml(instance.type || "Vector")}</div>
+    <div>Host: ${escapeHtml(instance.host || "localhost")}</div>
+    <div>Port: ${escapeHtml(String(instance.port ?? "?"))}</div>
+    <div>Collection: ${escapeHtml(instance.collection || "collection")}</div>
+    <div>Heartbeat: ${escapeHtml(heartbeat.detail || "Not checked")}</div>
+    <div>Collection access: ${escapeHtml(collection.detail || "Not checked")}</div>
+  `;
+}
+
+async function openVectorLibraryModal() {
+  if (!vectorInstances.length) return;
+
+  vectorLibraryModalEl.classList.remove("hidden");
+  vectorLibraryModalEl.setAttribute("aria-hidden", "false");
+  vectorLibraryStatusEl.textContent = "Loading knowledge base details...";
+  vectorLibraryTestResultEl.classList.add("hidden");
+  vectorLibraryTestResultEl.innerHTML = "";
+  vectorLibraryStatsEl.innerHTML = "";
+  vectorLibraryDocsEl.innerHTML = "";
+  isVectorLibraryLoading = true;
+  updateUiState();
+
+  try {
+    const instanceId = getSelectedVectorInstanceId();
+    const res = await fetch(`/api/vector/library?instanceId=${encodeURIComponent(instanceId)}`);
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Could not load knowledge base browser.");
+    }
+    renderVectorLibraryOverview(data);
+  } catch (error) {
+    vectorLibraryStatusEl.textContent = `Could not load knowledge base details: ${error.message}`;
+    vectorLibraryStatsEl.innerHTML = "";
+    vectorLibraryDocsEl.innerHTML = `<div class="library-empty">No data available.</div>`;
+  } finally {
+    isVectorLibraryLoading = false;
+    updateUiState();
+  }
+}
+
+function closeVectorLibraryModal() {
+  vectorLibraryModalEl.classList.add("hidden");
+  vectorLibraryModalEl.setAttribute("aria-hidden", "true");
+  updateUiState();
+}
+
+async function deleteVectorLibraryDocument(documentId, filename) {
+  if (!documentId) return;
+
+  isVectorLibraryLoading = true;
+  vectorLibraryStatusEl.textContent = `Deleting "${filename || documentId}" from the knowledge base...`;
+  updateUiState();
+
+  try {
+    const res = await fetch("/api/vector/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        vectorInstanceId: getSelectedVectorInstanceId(),
+        documentId
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Could not delete document from knowledge base.");
+    }
+
+    addMessage("system", `Deleted "${filename || documentId}" from knowledge base "${data.vectorInstanceName}".`);
+    await openVectorLibraryModal();
+  } catch (error) {
+    vectorLibraryStatusEl.textContent = `Delete failed: ${error.message}`;
+    addMessage("system", `Knowledge base delete error: ${error.message}`);
+  } finally {
+    isVectorLibraryLoading = false;
+    updateUiState();
+  }
+}
+
+async function runVectorConnectionTest() {
+  if (!vectorInstances.length) return;
+
+  isVectorConnectionTesting = true;
+  vectorLibraryTestBtnEl.textContent = "Testing...";
+  vectorLibraryTestResultEl.classList.remove("hidden", "ok", "error");
+  vectorLibraryTestResultEl.innerHTML = "Running connection test...";
+  updateUiState();
+
+  try {
+    const instanceId = getSelectedVectorInstanceId();
+    const res = await fetch(`/api/vector/test?instanceId=${encodeURIComponent(instanceId)}`);
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Connection test failed.");
+    }
+    renderVectorConnectionTestResult(data);
+  } catch (error) {
+    vectorLibraryTestResultEl.classList.remove("hidden", "ok");
+    vectorLibraryTestResultEl.classList.add("error");
+    vectorLibraryTestResultEl.textContent = `Connection test failed: ${error.message}`;
+  } finally {
+    isVectorConnectionTesting = false;
+    vectorLibraryTestBtnEl.textContent = "Connection test";
+    updateUiState();
   }
 }
 
@@ -736,6 +982,60 @@ async function loadModels() {
   }
 }
 
+async function loadVectorInstances() {
+  try {
+    const res = await fetch("/api/vector/instances");
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Could not load knowledge base instances.");
+    }
+
+    vectorInstances = Array.isArray(data.instances) ? data.instances : [];
+    vectorInstanceEl.innerHTML = "";
+
+    if (!vectorInstances.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No knowledge base";
+      vectorInstanceEl.appendChild(option);
+      vectorInstanceEl.disabled = true;
+      return;
+    }
+
+    const preferredInstanceId = loadSelectedVectorInstancePreference();
+    const defaultInstanceId = data.defaultInstanceId || vectorInstances[0].id;
+    const selectedInstanceId = vectorInstances.some((item) => item.id === preferredInstanceId)
+      ? preferredInstanceId
+      : defaultInstanceId;
+
+    vectorInstances.forEach((entry) => {
+      const option = document.createElement("option");
+      option.value = entry.id;
+      option.textContent = entry.name;
+      option.selected = entry.id === selectedInstanceId;
+      vectorInstanceEl.appendChild(option);
+    });
+
+    vectorInstanceEl.value = selectedInstanceId;
+    saveSelectedVectorInstancePreference(selectedInstanceId);
+    vectorInstanceEl.disabled = false;
+    updateUiState();
+  } catch (error) {
+    vectorInstances = [];
+    vectorInstanceEl.innerHTML = "";
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "Restart app";
+    vectorInstanceEl.appendChild(option);
+    vectorInstanceEl.disabled = true;
+    addMessage(
+      "system",
+      `Could not load knowledge base instances: ${error.message}. If you just updated the app, restart the Node server so /api/vector/instances is available.`
+    );
+    updateUiState();
+  }
+}
+
 async function attachPdf(file) {
   if (!file) return;
   const thread = getActiveThread();
@@ -750,22 +1050,7 @@ async function attachPdf(file) {
   setPdfLoadingState(true);
 
   try {
-    const arrayBuffer = await file.arrayBuffer();
-    const dataBase64 = toBase64(arrayBuffer);
-    const res = await fetch("/api/pdf/extract", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        filename: file.name,
-        mimeType: file.type || "application/pdf",
-        dataBase64
-      })
-    });
-
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || "Could not extract text from PDF.");
-    }
+    const data = await extractPdfFile(file);
 
     const rawText = data.text || "";
     const trimmedText = rawText.slice(0, MAX_STORED_PDF_TEXT_CHARS);
@@ -775,7 +1060,10 @@ async function attachPdf(file) {
       id: crypto.randomUUID(),
       filename: data.filename || file.name,
       pages: data.pages,
-      text: trimmedText
+      text: trimmedText,
+      extractionMethod: data.extractionMethod || "text",
+      ingestedAt: null,
+      chunkCount: null
     });
     touchThread(thread);
     moveThreadToTop(thread.id);
@@ -784,7 +1072,7 @@ async function attachPdf(file) {
     renderAttachedFiles();
 
     const attached = thread.pdfContexts[thread.pdfContexts.length - 1];
-    const contextTruncated = attached.text.length > MAX_PDF_CONTEXT_CHARS;
+    const contextTruncated = attached.text.length > MAX_PDF_TEXT_WARNING_CHARS;
     const extractionInfo =
       data.extractionMethod === "ocr"
         ? " OCR fallback was used."
@@ -793,9 +1081,9 @@ async function attachPdf(file) {
           : "";
     addMessage(
       "system",
-      `Attached "${attached.filename}" (${attached.pages ?? "?"} pages). ${
-        contextTruncated ? "Text may be truncated at prompt time." : "Text context is ready."
-      }${extractionInfo}${storageTrimmed ? " Stored text was truncated to keep local history size manageable." : ""}`
+      `Attached "${attached.filename}" (${attached.pages ?? "?"} pages) to the current chat.${extractionInfo}${
+        storageTrimmed ? " Stored text was truncated to keep local history size manageable." : ""
+      }${contextTruncated ? " Very large PDFs may be truncated during chat context injection." : ""}`
     );
   } catch (error) {
     addMessage("system", `PDF attach error: ${error.message}`);
@@ -805,7 +1093,7 @@ async function attachPdf(file) {
   }
 }
 
-function removePdfContext(id) {
+async function removePdfContext(id) {
   const thread = getActiveThread();
   if (!thread) return;
 
@@ -817,7 +1105,7 @@ function removePdfContext(id) {
   saveThreadState();
   renderThreadsList();
   renderAttachedFiles();
-  addMessage("system", `Removed "${removed.filename}" from thread context.`);
+  addMessage("system", `Removed "${removed.filename}" from this chat.`);
 }
 
 function maybeUpdateThreadTitle(thread, userText) {
@@ -825,6 +1113,71 @@ function maybeUpdateThreadTitle(thread, userText) {
   const normalized = userText.trim().replace(/\s+/g, " ");
   if (!normalized) return;
   thread.title = normalized.length > 48 ? `${normalized.slice(0, 48)}...` : normalized;
+}
+
+async function extractPdfFile(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const dataBase64 = toBase64(arrayBuffer);
+  const res = await fetch("/api/pdf/extract", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      filename: file.name,
+      mimeType: file.type || "application/pdf",
+      dataBase64
+    })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "Could not extract text from PDF.");
+  }
+  return data;
+}
+
+async function addPdfToLibrary(file) {
+  if (!file) return;
+  const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+  if (!isPdf) {
+    addMessage("system", "Only .pdf files are supported.");
+    return;
+  }
+
+  setPdfLoadingState(true);
+
+  try {
+    const extracted = await extractPdfFile(file);
+    const rawText = extracted.text || "";
+    const res = await fetch("/api/rag/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        vectorInstanceId: getSelectedVectorInstanceId(),
+        filename: extracted.filename || file.name,
+        pages: extracted.pages,
+        text: rawText
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Could not index document.");
+    }
+
+    const extractionInfo =
+      extracted.extractionMethod === "ocr"
+        ? " OCR fallback was used."
+        : extracted.extractionMethod === "mixed"
+          ? " OCR fallback supplemented extracted text."
+          : "";
+    addMessage(
+      "system",
+      `Added "${data.filename}" to knowledge base "${data.vectorInstanceName}"${data.chunkCount ? ` (${data.chunkCount} chunks)` : ""}.${extractionInfo}`
+    );
+  } catch (error) {
+    addMessage("system", `Knowledge base add error: ${error.message}`);
+  } finally {
+    setPdfLoadingState(false);
+    libraryFileEl.value = "";
+  }
 }
 
 async function sendChatMessage(userText) {
@@ -857,7 +1210,9 @@ async function sendChatMessage(userText) {
         model,
         messages: buildChatMessages(thread),
         webSearchEnabled: webSearchEnabled,
-        webSearchQuery: userText
+        webSearchQuery: userText,
+        vectorSearchEnabled: vectorSearchEnabled,
+        vectorInstanceId: getSelectedVectorInstanceId()
       })
     });
 
@@ -923,16 +1278,41 @@ pdfFileEl.addEventListener("change", async (event) => {
   await attachPdf(file);
 });
 
+libraryFileEl.addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  await addPdfToLibrary(file);
+});
+
 attachBtnEl.addEventListener("click", () => {
   if (!attachBtnEl.disabled) {
     pdfFileEl.click();
   }
 });
 
+libraryBtnEl.addEventListener("click", () => {
+  if (!libraryBtnEl.disabled) {
+    libraryFileEl.click();
+  }
+});
+
+vectorLibraryBtnEl.addEventListener("click", () => {
+  if (!vectorLibraryBtnEl.disabled) {
+    openVectorLibraryModal();
+  }
+});
+
+vectorLibraryTestBtnEl.addEventListener("click", () => {
+  if (!vectorLibraryTestBtnEl.disabled) {
+    runVectorConnectionTest();
+  }
+});
+
 attachedFilesEl.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLButtonElement)) return;
-  removePdfContext(target.dataset.id);
+  if (target.dataset.action === "remove") {
+    removePdfContext(target.dataset.id);
+  }
 });
 
 threadsListEl.addEventListener("submit", (event) => {
@@ -981,8 +1361,19 @@ webSearchBtnEl.addEventListener("click", () => {
   applyWebSearchUiState();
 });
 
+vectorSearchBtnEl.addEventListener("click", () => {
+  if (vectorSearchBtnEl.disabled) return;
+  vectorSearchEnabled = !vectorSearchEnabled;
+  saveVectorSearchPreference(vectorSearchEnabled);
+  applyVectorSearchUiState();
+});
+
 modelEl.addEventListener("change", () => {
   saveSelectedModelPreference(modelEl.value);
+});
+
+vectorInstanceEl.addEventListener("change", () => {
+  saveSelectedVectorInstancePreference(vectorInstanceEl.value);
 });
 
 threadsListEl.addEventListener("click", (event) => {
@@ -1033,9 +1424,33 @@ confirmDeleteBtnEl.addEventListener("click", () => {
   }
 });
 
+vectorLibraryModalEl.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  if (target.closest("[data-close-library-modal='true']")) {
+    closeVectorLibraryModal();
+  }
+});
+
+vectorLibraryCloseBtnEl.addEventListener("click", () => {
+  closeVectorLibraryModal();
+});
+
+vectorLibraryDocsEl.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement)) return;
+  if (target.dataset.action === "delete-library-doc") {
+    deleteVectorLibraryDocument(target.dataset.documentId, target.dataset.filename);
+  }
+});
+
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && pendingDeleteThreadId !== null) {
     closeDeleteModal();
+    return;
+  }
+  if (event.key === "Escape" && !vectorLibraryModalEl.classList.contains("hidden")) {
+    closeVectorLibraryModal();
   }
 });
 
@@ -1044,10 +1459,13 @@ if (!loadThreadState()) {
 }
 
 webSearchEnabled = loadWebSearchPreference();
+vectorSearchEnabled = loadVectorSearchPreference();
 applyWebSearchUiState();
+applyVectorSearchUiState();
 
 renderThreadsList();
 renderMessages();
 renderAttachedFiles();
 updateUiState();
 loadModels();
+loadVectorInstances();

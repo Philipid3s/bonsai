@@ -22,6 +22,11 @@
         <div class="controls">
           <label for="model">Model</label>
           <select id="model" name="model"></select>
+          <label for="vector-instance">Knowledge Base</label>
+          <select id="vector-instance" name="vector-instance"></select>
+          <button id="vector-library-btn" type="button" class="header-mini-btn" aria-label="Open knowledge base browser">
+            Browse
+          </button>
         </div>
       </header>
 
@@ -76,11 +81,45 @@
                       </svg>
                       <span>PDF</span>
                     </button>
+                    <button id="library-btn" class="icon-btn tool-icon-btn" type="button" aria-label="Add PDF to library">
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path
+                          d="M5 4.5A2.5 2.5 0 0 1 7.5 2H19v17.5a2.5 2.5 0 0 0-2.5-2.5H5zm0 0V18a2 2 0 0 0 2 2h9.5"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                      <span>Library</span>
+                    </button>
+                    <button
+                      id="vector-search-btn"
+                      class="icon-btn tool-icon-btn"
+                      type="button"
+                      aria-label="Toggle Knowledge Base Search"
+                      aria-pressed="false"
+                      title="Knowledge Base Search"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path
+                          d="M10.5 4a6.5 6.5 0 1 0 4.14 11.51l4.42 4.42 1.41-1.41-4.42-4.42A6.5 6.5 0 0 0 10.5 4z"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                      <span>KB</span>
+                    </button>
                   </div>
                 </div>
-                <p class="composer-hint">Enter to send. Shift+Enter for a new line.</p>
+                <p class="composer-hint">PDF stays in the current chat. Library adds a document permanently to the selected knowledge base. Enter to send.</p>
               </div>
               <input id="pdf-file" name="pdf-file" type="file" accept="application/pdf,.pdf" hidden />
+              <input id="library-file" name="library-file" type="file" accept="application/pdf,.pdf" hidden />
               <div id="attached-files" class="attached-files" aria-live="polite"></div>
               <div class="composer-row">
                 <textarea
@@ -115,6 +154,34 @@
           <button id="confirm-cancel-btn" type="button" class="modal-btn">Cancel</button>
           <button id="confirm-delete-btn" type="button" class="modal-btn danger">Delete</button>
         </div>
+      </section>
+    </div>
+
+    <div id="vector-library-modal" class="modal-shell hidden" aria-hidden="true">
+      <div class="modal-backdrop" data-close-library-modal="true"></div>
+      <section
+        class="modal-card library-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="vector-library-title"
+        aria-describedby="vector-library-description"
+      >
+        <div class="library-modal-header">
+          <div>
+            <h2 id="vector-library-title">Knowledge Base Browser</h2>
+            <p id="vector-library-description">Documents and usage stats for the selected knowledge base.</p>
+          </div>
+          <div class="library-modal-actions">
+            <button id="vector-library-test-btn" type="button" class="header-mini-btn">Connection test</button>
+            <button id="vector-library-close-btn" type="button" class="thread-mini-btn" aria-label="Close knowledge base browser">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.3 5.71 12 12l6.3 6.29-1.41 1.42L10.59 13.4 4.29 19.71 2.88 18.3 9.17 12 2.88 5.71 4.29 4.29l6.3 6.3 6.29-6.3z"/></svg>
+            </button>
+          </div>
+        </div>
+        <div id="vector-library-status" class="library-status">Loading...</div>
+        <div id="vector-library-test-result" class="library-test-result hidden"></div>
+        <div id="vector-library-stats" class="library-stats"></div>
+        <div id="vector-library-docs" class="library-docs"></div>
       </section>
     </div>
 
